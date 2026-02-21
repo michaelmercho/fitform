@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="FORM"/>
+<meta name="theme-color" content="#0a0a0f"/>
+<title>FORM – Body Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+html,body{background:#0a0a0f;color:#fff;font-family:'DM Sans',sans-serif;min-height:100vh;overscroll-behavior:none;}
+input,select,button,textarea{font-family:'DM Sans',sans-serif;}
+input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;}
+input[type=time]{color-scheme:dark;}
+select option{background:#1a1a22;color:#fff;}
+::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.15);border-radius:2px;}
+@keyframes scan{0%{top:0}100%{top:72px}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.fu{animation:fadeUp 0.2s ease forwards;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useMemo} = React;
+
+// ── Storage ───────────────────────────────────────────────────────────────────
+const LS={get:k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}},set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}},};
+const K={GOALS:"ft:goals",LOGS:"ft:logs",PEPT:"ft:peptides",FAVS:"ft:favs",NOTIF:"ft:notif",PROTOCOL:"ft:protocol"};
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const mac2cal=(p,c,f)=>Math.round((p||0)*4+(c||0)*4+(f||0)*9);
+const UNIT_G={g:1,ml:1,oz:28.3495,lb:453.592,cup:240,tbsp:15,tsp:5,serving:null};
+const toGrams=(qty,unit)=>{const f=UNIT_G[unit];return f==null?parseFloat(qty)||100:(parseFloat(qty)||0)*f;};
+const UNITS=["g","ml","oz","lb","cup","tbsp","tsp","serving"];
+const MEALS=["Breakfast","Lunch","Dinner","Snack"];
+const MEAL_COLORS={Breakfast:"#ffd93d",Lunch:"#4ecdc4",Dinner:"#a78bfa",Snack:"#ff6b6b"};
+const DEFAULT_GOALS={targetWeight:"",targetBF:"",targetCalories:2000,protein:180,carbs:180,fat:60,goalDate:"2026-04-18"};
+const DEFAULT_NOTIF={enabled:false,time:"21:00",day:4}; // day 4 = Thursday (0=Sun)
+const DAY_NAMES=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+
+const DEFAULT_PEPTIDES=[
+  {id:"tesamorelin",name:"Tesamorelin",dose:"10mg",color:"#4ecdc4",purpose:"Reduces visceral fat through pulsatile GH release & IGF-1 elevation",schedule:"Twice daily (AM + PM)",frequency:"daily",doseAmount:"1 mg · 10 units / 0.1 mL",reconstitution:"Add 1 mL BAC water → 10 mg/mL",supply:"6 vials = 60 mg · 28 days at 2 mg/day",notes:"Selective for intra-abdominal fat loss. Subcutaneous."},
+  {id:"bpc157",name:"BPC-157",dose:"10mg",color:"#ffd93d",purpose:"Accelerates healing of tendons, ligaments, muscles, nerves & GI tract",schedule:"Once daily",frequency:"daily",doseAmount:"250–500 mcg · 2.5–5 units / 0.025–0.05 mL",reconstitution:"Add 1 mL BAC water → 10 mg/mL",supply:"2 vials = 20 mg · 40–80 days",notes:"Inject near injury site if applicable. Subcutaneous."},
+  {id:"tb500",name:"TB-500",dose:"5mg",color:"#ff6b6b",purpose:"Tissue repair, cell migration, angiogenesis, reduces inflammation",schedule:"Weekly (wks 1–4) · every 1–2 wks (wks 5–8)",frequency:"weekly",doseAmount:"2–5 mg · For 2 mg: 20 units / 0.2 mL",reconstitution:"Add 1 mL BAC water → 5 mg/mL",supply:"5 vials = 25 mg · 5–12.5 weeks",notes:"Subcutaneous. Weekly reminder enabled."},
+  {id:"cjc1295",name:"CJC-1295 DAC",dose:"5mg",color:"#c5f82a",purpose:"Long-acting GHRH analog. Sustained GH & IGF-1 elevation (half-life ~6–8 days)",schedule:"Once weekly",frequency:"weekly",doseAmount:"1–2 mg · For 1 mg: 10 units / 0.1 mL",reconstitution:"Add 1 mL BAC water → 5 mg/mL",supply:"2 vials = 10 mg · 5–10 weeks",notes:"Fat loss, muscle recovery & lean mass. Subcutaneous."},
+  {id:"ipamorelin",name:"Ipamorelin",dose:"5mg",color:"#a78bfa",purpose:"Selective GH secretagogue. Natural GH pulses, minimal cortisol impact",schedule:"Twice daily (AM + PM)",frequency:"daily",doseAmount:"200–300 mcg · For 200 mcg: 2 units / 0.02 mL",reconstitution:"Add 1 mL BAC water → 5 mg/mL",supply:"4 vials = 20 mg · 33–50 days",notes:"Enhances recovery, sleep & fat metabolism. Subcutaneous."},
+  {id:"hgh",name:"HGH (Somatropin)",dose:"10 IU",color:"#38bdf8",
+    purpose:"Increases lean body mass, reduces fat (especially visceral), accelerates recovery, elevates IGF-1. Key for body recomposition — synergises strongly with Tesamorelin and Ipamorelin.",
+    schedule:"Once daily — inject in the morning on an empty stomach to preserve natural nighttime GH pulse. Some protocols split AM/pre-bed.",
+    frequency:"daily",
+    doseAmount:"2–4 IU/day · At 2 IU: draw 20 units (0.2 mL) · At 4 IU: draw 40 units (0.4 mL) on U-100 insulin syringe",
+    reconstitution:"Add 1 mL BAC water to 10 IU vial → 10 IU/mL. Inject water slowly down vial wall. Swirl gently — DO NOT SHAKE. Let dissolve 5–10 min in fridge if needed.",
+    supply:"10 IU vial: 5 days at 2 IU/day · 10 × 10 IU kit (100 IU): ~50 days at 2 IU/day or 25 days at 4 IU/day",
+    notes:"Refrigerate reconstituted vial at 2–8°C. Use within 14 days. Never freeze or shake. Watch for: water retention, joint pain, carpal tunnel (signs of too-high dose — reduce by 0.5 IU). Monitor IGF-1 levels every 6–8 weeks. Pairs powerfully with Tesamorelin (additive GH effect) and Ipamorelin (GH pulse amplification)."},
+];
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+const todayStr=()=>new Date().toISOString().split("T")[0];
+const fmtShort=s=>s?new Date(s+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"}):"";
+const fmtFull=s=>s?new Date(s+"T00:00:00").toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"}):"";
+const shiftDay=(s,n)=>{const d=new Date(s+"T00:00:00");d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];};
+const daysLeft=s=>!s?null:Math.max(0,Math.ceil((new Date(s)-new Date())/864e5));
+const lastN=n=>Array.from({length:n},(_,i)=>{const d=new Date();d.setDate(d.getDate()-(n-1-i));return d.toISOString().split("T")[0];});
+const weeklyDue=(p,logs)=>{for(let i=0;i<7;i++){const d=new Date();d.setDate(d.getDate()-i);if(logs[d.toISOString().split("T")[0]]?.[p.id])return false;}return true;};
+
+// ── Notification scheduling ───────────────────────────────────────────────────
+let notifTimer=null;
+function scheduleNotification(notif,pLogs,peptides=DEFAULT_PEPTIDES){
+  if(notifTimer){clearTimeout(notifTimer);notifTimer=null;}
+  if(!notif.enabled||Notification.permission!=="granted")return;
+  const now=new Date();
+  const [h,m]=notif.time.split(":").map(Number);
+  // Find next occurrence of the target day+time
+  let target=new Date(now);
+  target.setHours(h,m,0,0);
+  // Advance to correct day of week
+  const diff=(notif.day-target.getDay()+7)%7;
+  target.setDate(target.getDate()+diff);
+  if(target<=now)target.setDate(target.getDate()+7);
+  const ms=target-now;
+  notifTimer=setTimeout(()=>{
+    const weeklyPepts=peptides.filter(p=>p.frequency==="weekly"&&weeklyDue(p,pLogs));
+    if(weeklyPepts.length>0){
+      new Notification("💉 FORM – Injection Reminder",{body:`Time for: ${weeklyPepts.map(p=>p.name).join(" & ")}`,icon:"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💉</text></svg>",tag:"form-peptide"});
+    }
+    // Reschedule for next week
+    scheduleNotification(notif,pLogs);
+  },ms);
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+const INP={background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.12)",borderRadius:8,color:"#fff",padding:"11px 12px",fontSize:15,outline:"none",width:"100%",boxSizing:"border-box",fontFamily:"'DM Sans',sans-serif",WebkitAppearance:"none"};
+const BTNP={background:"#c5f82a",color:"#0a0a0f",border:"none",borderRadius:10,padding:"14px",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:0.5,textTransform:"uppercase",width:"100%",display:"block",touchAction:"manipulation"};
+const BTNG={background:"rgba(255,255,255,0.07)",color:"rgba(255,255,255,0.55)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:10,padding:"14px",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:0.5,textTransform:"uppercase",touchAction:"manipulation"};
+const CARD={background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:14,padding:16,marginBottom:14};
+const LBL={fontSize:11,color:"rgba(255,255,255,0.35)",textTransform:"uppercase",letterSpacing:0.8,display:"block",marginBottom:6};
+const BC="'Barlow Condensed',sans-serif";
+
+// ── Mini components ───────────────────────────────────────────────────────────
+function Ring({label,value,goal,color}){
+  const pct=Math.min(100,goal>0?(value/goal)*100:0),r=28,c=2*Math.PI*r;
+  return(
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
+      <svg width="72" height="72" style={{transform:"rotate(-90deg)"}}>
+        <circle cx="36" cy="36" r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="5"/>
+        <circle cx="36" cy="36" r={r} fill="none" stroke={color} strokeWidth="5" strokeDasharray={c} strokeDashoffset={c-(pct/100)*c} strokeLinecap="round" style={{transition:"stroke-dashoffset 0.7s ease"}}/>
+      </svg>
+      <div style={{marginTop:-54,marginBottom:12,textAlign:"center"}}>
+        <div style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:BC}}>{value}<span style={{fontSize:10,color:"rgba(255,255,255,0.35)"}}>g</span></div>
+        <div style={{fontSize:9,color:"rgba(255,255,255,0.3)",textTransform:"uppercase",letterSpacing:1}}>{label}</div>
+      </div>
+    </div>
+  );
+}
+
+function Bar({label,value,goal,color}){
+  const pct=Math.min(100,goal>0?(value/goal)*100:0),over=value>goal;
+  return(
+    <div style={{marginBottom:11}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontSize:12}}>
+        <span style={{color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:0.8,fontFamily:BC}}>{label}</span>
+        <span style={{color:over?"#ff6b6b":"#fff",fontWeight:600}}>{value}g / {goal}g</span>
+      </div>
+      <div style={{height:5,background:"rgba(255,255,255,0.08)",borderRadius:3,overflow:"hidden"}}>
+        <div style={{height:"100%",width:`${pct}%`,background:over?"#ff6b6b":color,borderRadius:3,transition:"width 0.5s ease"}}/>
+      </div>
+    </div>
+  );
+}
+
+function Stat({label,value,sub,color="#c5f82a"}){
+  return(
+    <div style={{...CARD,marginBottom:0}}>
+      <div style={{...LBL,marginBottom:5}}>{label}</div>
+      <div style={{fontSize:26,fontWeight:800,color,fontFamily:BC,lineHeight:1}}>{value}</div>
+      {sub&&<div style={{fontSize:11,color:"rgba(255,255,255,0.3)",marginTop:4}}>{sub}</div>}
+    </div>
+  );
+}
+
+// Line chart with optional range selector
+function Chart({data,keys,colors,showRange=false}){
+  const [range,setRange]=useState(7);
+  const displayData=data.slice(-range);
+  const w=310,h=88,p={t:8,r:8,b:20,l:30};
+  const vals=displayData.flatMap(d=>keys.map(k=>d[k])).filter(v=>v!=null&&v!==""&&!isNaN(+v));
+  return(
+    <div>
+      {showRange&&<div style={{display:"flex",gap:4,marginBottom:10}}>
+        {[7,14,30].map(r=>(
+          <button key={r} onClick={()=>setRange(r)} style={{background:range===r?"#c5f82a":"rgba(255,255,255,0.06)",border:"none",borderRadius:6,color:range===r?"#0a0a0f":"rgba(255,255,255,0.4)",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:BC,fontWeight:700,touchAction:"manipulation"}}>{r}d</button>
+        ))}
+      </div>}
+      {vals.length<2?<div style={{height:80,display:"flex",alignItems:"center",justifyContent:"center",color:"rgba(255,255,255,0.2)",fontSize:12}}>No data yet</div>:(()=>{
+        const mn=Math.min(...vals)*0.97,mx=Math.max(...vals)*1.03;
+        const xs=i=>p.l+i*(w-p.l-p.r)/Math.max(displayData.length-1,1);
+        const ys=v=>p.t+((mx-v)/(mx-mn))*(h-p.t-p.b);
+        return(
+          <svg width="100%" viewBox={`0 0 ${w} ${h+p.b}`} style={{overflow:"visible"}}>
+            <defs>{keys.map((k,i)=><linearGradient key={k} id={`cg${i}${k}${range}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={colors[i]} stopOpacity="0.25"/><stop offset="100%" stopColor={colors[i]} stopOpacity="0"/></linearGradient>)}</defs>
+            {[.25,.5,.75].map(t=><line key={t} x1={p.l} x2={w-p.r} y1={p.t+t*(h-p.t-p.b)} y2={p.t+t*(h-p.t-p.b)} stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>)}
+            {keys.map((k,i)=>{
+              const pts=displayData.map((d,j)=>d[k]!=null&&!isNaN(+d[k])?[xs(j),ys(+d[k])]:null).filter(Boolean);
+              if(!pts.length)return null;
+              const line=pts.map((pt,j)=>`${j===0?"M":"L"}${pt[0]} ${pt[1]}`).join(" ");
+              return <g key={k}><path d={`${line} L${pts[pts.length-1][0]} ${h-p.b} L${pts[0][0]} ${h-p.b}Z`} fill={`url(#cg${i}${k}${range})`}/><path d={line} fill="none" stroke={colors[i]} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>{pts.length<=14&&pts.map((pt,j)=><circle key={j} cx={pt[0]} cy={pt[1]} r="3" fill={colors[i]}/>)}</g>;
+            })}
+            {displayData.filter((_,i)=>range<=7||i%(range<=14?2:5)===0).map((d,_,arr)=>{
+              const i=displayData.indexOf(d);
+              return <text key={i} x={xs(i)} y={h+p.b-2} textAnchor="middle" fontSize="8" fill="rgba(255,255,255,0.22)">{fmtShort(d.date)}</text>;
+            })}
+          </svg>
+        );
+      })()}
+    </div>
+  );
+}
+
+// Donut macro split chart
+function MacroPie({protein,carbs,fat}){
+  const total=protein*4+carbs*4+fat*9;
+  if(total===0)return <div style={{height:120,display:"flex",alignItems:"center",justifyContent:"center",color:"rgba(255,255,255,0.2)",fontSize:12}}>No data yet</div>;
+  const slices=[
+    {label:"Protein",val:protein*4,color:"#4ecdc4"},
+    {label:"Carbs",val:carbs*4,color:"#ffd93d"},
+    {label:"Fat",val:fat*9,color:"#ff6b6b"},
+  ];
+  const r=44,cx=60,cy=60,stroke=14;
+  const circ=2*Math.PI*r;
+  let offset=0;
+  const arcs=slices.map(s=>{const pct=s.val/total;const arc={...s,pct,offset,dash:pct*circ,gap:(1-pct)*circ};offset+=pct*circ;return arc;});
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:16}}>
+      <svg width="120" height="120" style={{flexShrink:0,transform:"rotate(-90deg)"}}>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={stroke}/>
+        {arcs.map((a,i)=>(
+          <circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={a.color} strokeWidth={stroke}
+            strokeDasharray={`${a.dash-1} ${circ-a.dash+1}`}
+            strokeDashoffset={-a.offset+circ/4}
+            strokeLinecap="butt"
+            style={{transition:"all 0.6s ease"}}/>
+        ))}
+      </svg>
+      <div style={{flex:1}}>
+        {arcs.map(a=>(
+          <div key={a.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:7}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:a.color}}/>
+              <span style={{fontSize:12,color:"rgba(255,255,255,0.6)",fontFamily:BC,textTransform:"uppercase",letterSpacing:0.5}}>{a.label}</span>
+            </div>
+            <span style={{fontSize:13,fontWeight:700,color:"#fff",fontFamily:BC}}>{Math.round(a.pct*100)}%</span>
+          </div>
+        ))}
+        <div style={{borderTop:"1px solid rgba(255,255,255,0.07)",paddingTop:8,marginTop:4}}>
+          <div style={{fontSize:11,color:"rgba(255,255,255,0.3)"}}>Total: <span style={{color:"#c5f82a",fontWeight:700,fontFamily:BC}}>{Math.round(total)} kcal</span></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Streak badge
+function StreakBadge({streak}){
+  if(streak===0)return null;
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:6,background:"rgba(197,248,42,0.08)",border:"1px solid rgba(197,248,42,0.2)",borderRadius:10,padding:"6px 12px"}}>
+      <span style={{fontSize:18}}>🔥</span>
+      <div>
+        <div style={{fontFamily:BC,fontSize:20,fontWeight:800,color:"#c5f82a",lineHeight:1}}>{streak}</div>
+        <div style={{fontSize:9,color:"rgba(255,255,255,0.35)",textTransform:"uppercase",letterSpacing:1}}>day streak</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Barcode scanner ───────────────────────────────────────────────────────────
+function BarcodeScanner({onFound}){
+  const videoRef=useRef(),streamRef=useRef(),rafRef=useRef();
+  const [mode,setMode]=useState("type");
+  const [camStatus,setCamStatus]=useState("idle");
+  const [code,setCode]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState("");
+  useEffect(()=>()=>{stopCam();},[]);
+  function stopCam(){if(rafRef.current)cancelAnimationFrame(rafRef.current);if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}}
+  async function startCam(){
+    stopCam();setCamStatus("starting");setError("");
+    if(!("BarcodeDetector" in window)){setCamStatus("unsupported");return;}
+    try{
+      const det=new BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e","code_128","code_39","qr_code"]});
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280}}});
+      streamRef.current=stream;videoRef.current.srcObject=stream;await videoRef.current.play();setCamStatus("scanning");tick(det);
+    }catch(e){setCamStatus(e.name==="NotAllowedError"?"denied":e.name==="NotFoundError"?"nocam":"error");}
+  }
+  async function tick(det){
+    if(!videoRef.current||videoRef.current.readyState<2){rafRef.current=requestAnimationFrame(()=>tick(det));return;}
+    try{const c=await det.detect(videoRef.current);if(c.length>0){stopCam();setCamStatus("idle");doLookup(c[0].rawValue);return;}}catch{}
+    rafRef.current=requestAnimationFrame(()=>tick(det));
+  }
+  async function doLookup(raw){
+    const val=raw.trim();if(!val)return;
+    setLoading(true);setError("");
+    try{
+      let data=null;
+      const r=await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(val)}?fields=product_name,nutriments`,{headers:{"User-Agent":"FORMTracker/1.0"}});
+      if(r.ok)data=await r.json();
+      if(!data||data.status===0){const r2=await fetch(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(val)}.json`);if(r2.ok)data=await r2.json();}
+      if(!data||data.status===0||!data.product)throw new Error("Product not found. Try entering macros manually.");
+      const n=data.product.nutriments||{};
+      const protein=Math.round(parseFloat(n.proteins_100g||n.proteins||0));
+      const carbs=Math.round(parseFloat(n.carbohydrates_100g||n.carbohydrates||0));
+      const fat=Math.round(parseFloat(n.fat_100g||n.fat||0));
+      onFound({name:data.product.product_name||"Unknown product",protein,carbs,fat,calories:mac2cal(protein,carbs,fat)});
+    }catch(e){setError(String(e.message||e));}
+    setLoading(false);
+  }
+  const tb=(m,l)=><button key={m} onClick={()=>{setMode(m);if(m==="camera")startCam();else stopCam();}} style={{flex:1,background:mode===m?"#c5f82a":"rgba(255,255,255,0.07)",border:"none",borderRadius:8,color:mode===m?"#0a0a0f":"rgba(255,255,255,0.5)",padding:"10px",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:BC,textTransform:"uppercase",touchAction:"manipulation"}}>{l}</button>;
+  return(
+    <div>
+      <div style={{display:"flex",gap:6,marginBottom:14}}>{tb("type","⌨️ Type Code")}{tb("camera","📷 Camera")}</div>
+      {mode==="type"&&<div>
+        <label style={LBL}>Barcode Number</label>
+        <div style={{display:"flex",gap:8}}>
+          <input style={{...INP,flex:1,width:"auto"}} inputMode="numeric" pattern="[0-9]*" placeholder="e.g. 012345678905" value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,""))} onKeyDown={e=>e.key==="Enter"&&doLookup(code)}/>
+          <button onClick={()=>doLookup(code)} disabled={loading||!code} style={{...BTNP,width:"auto",padding:"11px 20px",flexShrink:0,opacity:(!code||loading)?0.45:1}}>{loading?"…":"Look Up"}</button>
+        </div>
+        {loading&&<div style={{marginTop:12,textAlign:"center",color:"rgba(255,255,255,0.4)",fontSize:13}}>Searching database…</div>}
+        {error&&<div style={{marginTop:10,background:"rgba(255,107,107,0.1)",border:"1px solid rgba(255,107,107,0.25)",borderRadius:8,padding:"10px 12px",fontSize:12,color:"#ff9999",lineHeight:1.5}}>{error}</div>}
+      </div>}
+      {mode==="camera"&&<div>
+        {camStatus==="unsupported"&&<div style={{background:"rgba(255,107,107,0.1)",border:"1px solid rgba(255,107,107,0.3)",borderRadius:12,padding:14,fontSize:13,color:"#ff9999",lineHeight:1.6}}>Camera scanning needs HTTPS. Use <strong>Type Code</strong>, or host on Netlify for camera support.</div>}
+        {camStatus==="denied"&&<div style={{background:"rgba(255,107,107,0.1)",border:"1px solid rgba(255,107,107,0.3)",borderRadius:12,padding:14,fontSize:13,color:"#ff9999",lineHeight:1.6}}>Camera denied. Allow camera in browser settings then tap Camera again.</div>}
+        {camStatus==="nocam"&&<div style={{background:"rgba(255,107,107,0.1)",border:"1px solid rgba(255,107,107,0.3)",borderRadius:12,padding:14,fontSize:13,color:"#ff9999"}}>No camera found.</div>}
+        {(camStatus==="starting"||camStatus==="scanning")&&<div style={{position:"relative",borderRadius:14,overflow:"hidden",background:"#000",lineHeight:0}}>
+          <video ref={videoRef} playsInline muted style={{width:"100%",height:250,objectFit:"cover",display:"block"}}/>
+          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+            <div style={{position:"relative",width:"78%",height:76,border:"2px solid #c5f82a",borderRadius:8,boxShadow:"0 0 0 9999px rgba(0,0,0,0.45)"}}>
+              <div style={{position:"absolute",left:0,right:0,height:2,background:"linear-gradient(90deg,transparent,#c5f82a,transparent)",boxShadow:"0 0 8px #c5f82a",animation:"scan 1.8s linear infinite"}}/>
+            </div>
+          </div>
+          {camStatus==="starting"&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"rgba(255,255,255,0.5)"}}>Starting camera…</div>}
+          <div style={{position:"absolute",bottom:10,left:0,right:0,textAlign:"center",fontSize:12,color:"rgba(255,255,255,0.5)"}}>Point at barcode</div>
+        </div>}
+        {camStatus==="idle"&&<button onClick={startCam} style={BTNP}>Start Camera</button>}
+      </div>}
+    </div>
+  );
+}
+
+// ── Peptide card ──────────────────────────────────────────────────────────────
+function PCard({p,logs,onToggle,onEdit,onDelete}){
+  const [open,setOpen]=useState(false);
+  const due=p.frequency==="weekly"&&weeklyDue(p,logs);
+  const done=!!logs[todayStr()]?.[p.id];
+  return(
+    <div style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${due?"rgba(197,248,42,0.35)":"rgba(255,255,255,0.08)"}`,borderRadius:14,marginBottom:10,overflow:"hidden",position:"relative"}}>
+      {due&&<div style={{position:"absolute",top:0,left:0,right:0,height:2,background:"#c5f82a",boxShadow:"0 0 8px #c5f82a"}}/>}
+      <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 14px 8px"}}>
+        <div style={{width:10,height:10,borderRadius:"50%",background:p.color,flexShrink:0}}/>
+        <div style={{fontFamily:BC,fontSize:19,fontWeight:800,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+        <div style={{fontSize:11,color:p.color,background:`${p.color}22`,borderRadius:6,padding:"3px 8px",fontFamily:BC,fontWeight:700,flexShrink:0}}>{p.dose}</div>
+        <button onClick={()=>setOpen(o=>!o)} style={{background:"rgba(255,255,255,0.06)",border:"none",borderRadius:6,color:"rgba(255,255,255,0.5)",cursor:"pointer",width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:11,touchAction:"manipulation"}}>{open?"▲":"▼"}</button>
+      </div>
+      <div style={{fontSize:12,color:"rgba(255,255,255,0.4)",lineHeight:1.5,padding:"0 14px 10px"}}>{p.purpose}</div>
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"0 14px 14px"}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:11,color:p.color,fontFamily:BC,textTransform:"uppercase",letterSpacing:0.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.schedule}</div>
+          {due&&<div style={{fontSize:10,color:"#c5f82a",fontFamily:BC,textTransform:"uppercase",fontWeight:700,marginTop:2}}>⚡ Due this week</div>}
+        </div>
+        {p.frequency==="weekly"&&<button onClick={()=>onToggle(p.id)} style={{background:done?"rgba(197,248,42,0.15)":"rgba(255,255,255,0.06)",border:`1px solid ${done?"#c5f82a":"rgba(255,255,255,0.15)"}`,borderRadius:8,color:done?"#c5f82a":"rgba(255,255,255,0.5)",fontSize:12,padding:"9px 14px",cursor:"pointer",fontFamily:BC,fontWeight:700,textTransform:"uppercase",whiteSpace:"nowrap",flexShrink:0,minWidth:100,textAlign:"center",touchAction:"manipulation"}}>
+          {done?"✓ Done":"Mark Done"}
+        </button>}
+      </div>
+      {open&&<div style={{borderTop:"1px solid rgba(255,255,255,0.07)",padding:14}}>
+        {[["💉 Dose",p.doseAmount],["🧪 Recon",p.reconstitution],["📦 Supply",p.supply],["📋 Notes",p.notes]].map(([l,v])=>(
+          <div key={l} style={{display:"flex",gap:10,paddingBottom:10,marginBottom:10,borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+            <div style={{fontSize:10,color:"rgba(255,255,255,0.25)",textTransform:"uppercase",letterSpacing:0.8,fontFamily:BC,whiteSpace:"nowrap",paddingTop:1,minWidth:72}}>{l}</div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,0.75)",lineHeight:1.55,flex:1}}>{v}</div>
+          </div>
+        ))}
+        <div style={{display:"flex",gap:8,marginTop:4}}>
+          {onEdit&&<button onClick={onEdit} style={{...BTNG,flex:1,padding:"9px",fontSize:12}}>✏️ Edit</button>}
+          {onDelete&&<button onClick={onDelete} style={{flex:1,padding:"9px",fontSize:12,background:"rgba(255,107,107,0.1)",border:"1px solid rgba(255,107,107,0.25)",borderRadius:10,color:"#ff9999",cursor:"pointer",fontFamily:BC,fontWeight:700,textTransform:"uppercase",touchAction:"manipulation"}}>🗑 Remove</button>}
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+function App(){
+  const [goals,setGoals]   = useState(()=>({...DEFAULT_GOALS,...(LS.get(K.GOALS)||{})}));
+  const [logs,setLogs]     = useState(()=>LS.get(K.LOGS)||{});
+  const [pLogs,setPLogs]   = useState(()=>LS.get(K.PEPT)||{});
+  const [favs,setFavs]     = useState(()=>LS.get(K.FAVS)||[]);
+  const [notif,setNotif]   = useState(()=>({...DEFAULT_NOTIF,...(LS.get(K.NOTIF)||{})}));
+  const [peptides,setPeptides] = useState(()=>{
+    const stored=LS.get(K.PROTOCOL);
+    if(!stored) return DEFAULT_PEPTIDES;
+    // Merge: add any new DEFAULT_PEPTIDES entries not already in stored list
+    const storedIds=new Set(stored.map(p=>p.id));
+    const newEntries=DEFAULT_PEPTIDES.filter(p=>!storedIds.has(p.id));
+    if(newEntries.length>0){
+      const merged=[...stored,...newEntries];
+      LS.set(K.PROTOCOL,merged);
+      return merged;
+    }
+    return stored;
+  });
+  const [showPeptideModal,setShowPeptideModal] = useState(false);
+  const [editPeptide,setEditPeptide] = useState(null); // null=new, obj=editing
+  const BLANK_P = {id:"",name:"",dose:"",color:"#c5f82a",purpose:"",schedule:"",frequency:"daily",doseAmount:"",reconstitution:"",supply:"",notes:""};
+  const [pForm,setPForm] = useState(BLANK_P);
+
+  const [tab,setTab]         = useState("dashboard");
+  const [logDate,setLogDate] = useState(todayStr());
+  const [secret,setSecret]   = useState(false);
+
+  // Food modal
+  const [showFood,setShowFood]   = useState(false);
+  const [foodTab,setFoodTab]     = useState("manual");
+  const [meal,setMeal]           = useState("Breakfast");
+  const [mf,setMf]               = useState({name:"",protein:"",carbs:"",fat:"",qty:"100",unit:"g"});
+  const [pending,setPending]     = useState(null);
+  const [pQty,setPQty]           = useState("100");
+  const [pUnit,setPUnit]         = useState("g");
+  const [photoFile,setPhotoFile] = useState(null);
+  const [photoThumb,setPhotoThumb]=useState(null);
+  const [photoLoading,setPhotoLoading]=useState(false);
+  const [photoError,setPhotoError]=useState("");
+
+  // Edit modal
+  const [editIdx,setEditIdx]   = useState(null);
+  const [editForm,setEditForm] = useState(null);
+
+  // Goals modal
+  const [showGoals,setShowGoals] = useState(false);
+  const [goalsForm,setGoalsForm] = useState(goals);
+
+  // Notification permission state
+  const [notifPerm,setNotifPerm] = useState(typeof Notification!=="undefined"?Notification.permission:"denied");
+
+  const fileRef=useRef();
+  const tapN=useRef(0),tapT=useRef(null);
+
+  // Schedule notifications whenever notif settings or pLogs change
+  useEffect(()=>{scheduleNotification(notif,pLogs,peptides);},[notif,pLogs,peptides]);
+
+  function logoTap(){tapN.current++;clearTimeout(tapT.current);tapT.current=setTimeout(()=>tapN.current=0,600);if(tapN.current>=3){tapN.current=0;setSecret(s=>!s);if(!secret)setTab("peptides");}}
+
+  function saveGoals(g){setGoals(g);LS.set(K.GOALS,g);}
+  function saveLogs(l){setLogs(l);LS.set(K.LOGS,l);}
+  function savePLogs(l){setPLogs(l);LS.set(K.PEPT,l);}
+  function savePeptides(arr){setPeptides(arr);LS.set(K.PROTOCOL,arr);}
+  function saveFavs(f){setFavs(f);LS.set(K.FAVS,f);}
+  function saveNotif(n){setNotif(n);LS.set(K.NOTIF,n);}
+
+  const al=logs[logDate]||{weight:"",bf:"",foods:[]};
+  const setField=(f,v)=>saveLogs({...logs,[logDate]:{...al,[f]:v}});
+  const addFood=food=>saveLogs({...logs,[logDate]:{...al,foods:[...(al.foods||[]),food]}});
+  const delFood=idx=>saveLogs({...logs,[logDate]:{...al,foods:(al.foods||[]).filter((_,i)=>i!==idx)}});
+  const toggleP=id=>{const t=todayStr(),ex=pLogs[t]?.[id];savePLogs({...pLogs,[t]:{...pLogs[t],[id]:!ex}});};
+
+  function addToFavs(food){
+    const base={name:food.name,protein:food.protein,carbs:food.carbs,fat:food.fat,calories:food.calories};
+    if(favs.some(f=>f.name===base.name))return;
+    saveFavs([base,...favs].slice(0,30));
+  }
+  function removeFav(name){saveFavs(favs.filter(f=>f.name!==name));}
+
+  // Copy yesterday
+  function copyYesterday(){
+    const yesterday=shiftDay(logDate,-1);
+    const yFoods=logs[yesterday]?.foods||[];
+    if(!yFoods.length){alert("No food logged yesterday.");return;}
+    saveLogs({...logs,[logDate]:{...al,foods:[...(al.foods||[]),...yFoods]}});
+  }
+
+  // Streak: consecutive days where calorie goal was hit (>= 80% of target)
+  const streak=useMemo(()=>{
+    let s=0;
+    const today=todayStr();
+    for(let i=0;i<365;i++){
+      const d=shiftDay(today,-i);
+      const foods=logs[d]?.foods||[];
+      const cal=foods.reduce((a,f)=>a+(f.calories||0),0);
+      if(cal>=goals.targetCalories*0.8)s++;
+      else break;
+    }
+    return s;
+  },[logs,goals.targetCalories]);
+
+  const totals=(al.foods||[]).reduce((a,f)=>({cal:a.cal+(f.calories||0),p:a.p+(f.protein||0),c:a.c+(f.carbs||0),fat:a.fat+(f.fat||0)}),{cal:0,p:0,c:0,fat:0});
+  const todayCal=(logs[todayStr()]?.foods||[]).reduce((a,f)=>a+(f.calories||0),0);
+  const days30=lastN(30);
+  const days7=days30.slice(-7);
+  const chartData=days30.map(d=>({date:d,weight:logs[d]?.weight||null,bf:logs[d]?.bf||null}));
+  const week=days7.reduce((acc,d)=>{
+    const f=logs[d]?.foods||[];
+    const t=f.reduce((a,x)=>({cal:a.cal+(x.calories||0),p:a.p+(x.protein||0),c:a.c+(x.carbs||0),fat:a.fat+(x.fat||0)}),{cal:0,p:0,c:0,fat:0});
+    return{cal:acc.cal+t.cal,p:acc.p+t.p,c:acc.c+t.c,fat:acc.fat+t.fat,n:acc.n+(f.length>0?1:0)};
+  },{cal:0,p:0,c:0,fat:0,n:0});
+
+  const dl=daysLeft(goals.goalDate);
+  const isToday=logDate===todayStr();
+  const wDue=peptides.filter(p=>p.frequency==="weekly"&&weeklyDue(p,pLogs)).length;
+
+  function buildFood(base,qty,unit,mealName){
+    const s=toGrams(qty,unit)/100;
+    return{name:base.name,protein:Math.round(base.protein*s),carbs:Math.round(base.carbs*s),fat:Math.round(base.fat*s),calories:Math.round(base.calories*s),displayQty:`${qty}${unit}`,meal:mealName};
+  }
+  function confirmPending(){
+    if(pending){
+      const food=buildFood(pending,pQty,pUnit,meal);
+      addFood(food);addToFavs(pending);closeFood();
+    }
+  }
+  function addManual(){
+    const p=parseFloat(mf.protein)||0,c=parseFloat(mf.carbs)||0,f=parseFloat(mf.fat)||0;
+    const s=toGrams(mf.qty,mf.unit)/100;
+    const food={name:mf.name||"Food",protein:Math.round(p*s),carbs:Math.round(c*s),fat:Math.round(f*s),calories:mac2cal(p*s,c*s,f*s),displayQty:`${mf.qty}${mf.unit}`,meal};
+    addFood(food);
+    addToFavs({name:food.name,protein:Math.round(p),carbs:Math.round(c),fat:Math.round(f),calories:mac2cal(p,c,f)});
+    closeFood();
+  }
+  function addFromFav(fav){
+    addFood({...fav,displayQty:"100g",meal});closeFood();
+  }
+  function closeFood(){setShowFood(false);setFoodTab("manual");setMf({name:"",protein:"",carbs:"",fat:"",qty:"100",unit:"g"});setPending(null);setPQty("100");setPUnit("g");setPhotoFile(null);setPhotoThumb(null);setPhotoError("");setPhotoLoading(false);}
+
+  function openEdit(idx){const f=al.foods[idx];setEditIdx(idx);setEditForm({name:f.name,protein:String(f.protein),carbs:String(f.carbs),fat:String(f.fat),meal:f.meal||"Breakfast"});}
+  function saveEdit(){
+    if(editForm==null)return;
+    const p=parseFloat(editForm.protein)||0,c=parseFloat(editForm.carbs)||0,f=parseFloat(editForm.fat)||0;
+    const updated={...al.foods[editIdx],name:editForm.name||"Food",protein:Math.round(p),carbs:Math.round(c),fat:Math.round(f),calories:mac2cal(p,c,f),meal:editForm.meal};
+    saveLogs({...logs,[logDate]:{...al,foods:(al.foods||[]).map((item,i)=>i===editIdx?updated:item)}});
+    setEditIdx(null);setEditForm(null);
+  }
+
+  async function analyzePhoto(){
+    if(!photoFile)return;
+    setPhotoLoading(true);setPhotoError("");setPending(null);
+    try{
+      const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.onerror=rej;r.readAsDataURL(photoFile);});
+      const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:400,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:photoFile.type||"image/jpeg",data:b64}},{type:"text",text:'Identify this food. Reply ONLY valid JSON, no markdown: {"name":"string","protein":number,"carbs":number,"fat":number}. Macros per 100g.'}]}]})});
+      const d=await resp.json();
+      const parsed=JSON.parse((d.content||[]).map(c=>c.text||"").join("").trim());
+      parsed.calories=mac2cal(parsed.protein,parsed.carbs,parsed.fat);
+      setPending(parsed);setPQty("100");setPUnit("g");
+    }catch{setPhotoError("Could not identify — try a clearer photo.");}
+    setPhotoLoading(false);
+  }
+
+  async function requestNotifPerm(){
+    if(typeof Notification==="undefined"){alert("Notifications not supported in this browser.");return;}
+    const perm=await Notification.requestPermission();
+    setNotifPerm(perm);
+    if(perm==="granted"){
+      const n={...notif,enabled:true};saveNotif(n);
+    }
+  }
+
+  // Group foods by meal for display
+  const foodsByMeal=useMemo(()=>{
+    const groups={};
+    (al.foods||[]).forEach((f,i)=>{
+      const m=f.meal||"Uncategorised";
+      if(!groups[m])groups[m]=[];
+      groups[m].push({...f,_idx:i});
+    });
+    return groups;
+  },[al.foods]);
+
+  const sel={...INP,cursor:"pointer"};
+  const nb=t=>({flex:1,background:tab===t?"#c5f82a":"transparent",color:tab===t?"#0a0a0f":"rgba(255,255,255,0.4)",border:"none",borderRadius:8,padding:"9px 2px",fontWeight:700,fontSize:10,cursor:"pointer",fontFamily:BC,letterSpacing:0.8,textTransform:"uppercase",position:"relative",touchAction:"manipulation"});
+  const fb=t=>({flex:1,background:foodTab===t?"#c5f82a":"rgba(255,255,255,0.07)",border:"none",borderRadius:8,color:foodTab===t?"#0a0a0f":"rgba(255,255,255,0.5)",padding:"9px 4px",fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:BC,textTransform:"uppercase",touchAction:"manipulation"});
+  const mealBtn=m=>({flex:1,background:meal===m?MEAL_COLORS[m]:"rgba(255,255,255,0.05)",border:`1px solid ${meal===m?MEAL_COLORS[m]:"rgba(255,255,255,0.1)"}`,borderRadius:8,color:meal===m?"#0a0a0f":"rgba(255,255,255,0.45)",padding:"8px 4px",fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:BC,textTransform:"uppercase",touchAction:"manipulation",letterSpacing:0.3});
+  const mfS=toGrams(mf.qty,mf.unit)/100;
+  const pS=pending?toGrams(pQty,pUnit)/100:0;
+
+  return(
+    <div style={{background:"#0a0a0f",minHeight:"100vh",maxWidth:480,margin:"0 auto",paddingBottom:20}}>
+
+      {/* Header */}
+      <div style={{borderBottom:"1px solid rgba(255,255,255,0.07)",padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"rgba(10,10,15,0.97)",backdropFilter:"blur(12px)",zIndex:100}}>
+        <div onClick={logoTap} style={{cursor:"pointer",userSelect:"none",WebkitUserSelect:"none"}}>
+          <div style={{fontFamily:BC,fontSize:24,fontWeight:800,color:"#c5f82a",lineHeight:1}}>FORM</div>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.25)",letterSpacing:2,textTransform:"uppercase"}}>Body Tracker</div>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <StreakBadge streak={streak}/>
+          {dl!==null&&<div style={{textAlign:"right"}}>
+            <div style={{fontFamily:BC,fontSize:22,fontWeight:800,color:"#c5f82a",lineHeight:1}}>{dl}</div>
+            <div style={{fontSize:9,color:"rgba(255,255,255,0.25)",textTransform:"uppercase",letterSpacing:1}}>days to go</div>
+          </div>}
+          <button onClick={()=>{setGoalsForm(goals);setShowGoals(true);}} style={{...BTNG,padding:"8px 12px",fontSize:12,width:"auto"}}>Goals</button>
+        </div>
+      </div>
+
+      {/* Nav */}
+      <div style={{padding:"10px 14px",display:"flex",gap:5,borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+        {[["dashboard","Dashboard"],["log","Log"],["week","Weekly"]].map(([t,l])=><button key={t} onClick={()=>setTab(t)} style={nb(t)}>{l}</button>)}
+        {secret&&<button onClick={()=>setTab("peptides")} style={nb("peptides")}>
+          💊 Protocol
+          {wDue>0&&<span style={{position:"absolute",top:0,right:1,background:"#c5f82a",color:"#0a0a0f",borderRadius:"50%",width:14,height:14,fontSize:8,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{wDue}</span>}
+        </button>}
+      </div>
+
+      <div style={{padding:"16px 16px 80px"}}>
+
+        {/* ══ DASHBOARD ══ */}
+        {tab==="dashboard"&&<div className="fu">
+          {/* Calorie hero */}
+          <div style={{background:"linear-gradient(135deg,rgba(197,248,42,0.12),rgba(197,248,42,0.03))",border:"1px solid rgba(197,248,42,0.2)",borderRadius:16,padding:18,marginBottom:14}}>
+            <div style={{fontFamily:BC,fontSize:11,color:"rgba(255,255,255,0.4)",textTransform:"uppercase",letterSpacing:1.5,marginBottom:10}}>Today's Calories</div>
+            <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+              <div style={{fontFamily:BC,fontSize:56,fontWeight:800,color:"#c5f82a",lineHeight:1}}>{todayCal}</div>
+              <div style={{color:"rgba(255,255,255,0.3)",fontSize:14}}>/ {goals.targetCalories} kcal</div>
+            </div>
+            <div style={{marginTop:12,height:5,background:"rgba(255,255,255,0.08)",borderRadius:3,overflow:"hidden"}}>
+              <div style={{height:"100%",width:`${Math.min(100,(todayCal/goals.targetCalories)*100)}%`,background:todayCal>goals.targetCalories?"#ff6b6b":"#c5f82a",borderRadius:3,transition:"width 0.5s ease"}}/>
+            </div>
+            <div style={{marginTop:8,fontSize:13,color:todayCal>goals.targetCalories?"#ff6b6b":"#c5f82a"}}>
+              {todayCal===0?"Log your first meal":todayCal>goals.targetCalories?`+${todayCal-goals.targetCalories} kcal over target`:`${goals.targetCalories-todayCal} kcal remaining`}
+            </div>
+          </div>
+
+          {/* Macro rings */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
+            {[["Protein",(logs[todayStr()]?.foods||[]).reduce((a,f)=>a+(f.protein||0),0),goals.protein,"#4ecdc4"],["Carbs",(logs[todayStr()]?.foods||[]).reduce((a,f)=>a+(f.carbs||0),0),goals.carbs,"#ffd93d"],["Fat",(logs[todayStr()]?.foods||[]).reduce((a,f)=>a+(f.fat||0),0),goals.fat,"#ff6b6b"]].map(([l,v,g,c])=>(
+              <div key={l} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:12,padding:"10px 4px",display:"flex",justifyContent:"center",minWidth:0}}>
+                <Ring label={l} value={v} goal={g} color={c}/>
+              </div>
+            ))}
+          </div>
+
+          {/* Macro split pie */}
+          <div style={{...CARD}}>
+            <div style={{fontFamily:BC,fontSize:11,color:"rgba(255,255,255,0.35)",textTransform:"uppercase",letterSpacing:1.5,marginBottom:14}}>Macro Split — Today</div>
+            <MacroPie
+              protein={(logs[todayStr()]?.foods||[]).reduce((a,f)=>a+(f.protein||0),0)}
+              carbs={(logs[todayStr()]?.foods||[]).reduce((a,f)=>a+(f.carbs||0),0)}
+              fat={(logs[todayStr()]?.foods||[]).reduce((a,f)=>a+(f.fat||0),0)}
+            />
+          </div>
+
+          {/* Stats */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+            <Stat label="Weight" value={logs[todayStr()]?.weight?`${logs[todayStr()].weight} lbs`:"—"} sub={goals.targetWeight?`Goal: ${goals.targetWeight} lbs`:undefined}/>
+            <Stat label="Body Fat" value={logs[todayStr()]?.bf?`${logs[todayStr()].bf}%`:"—"} sub={goals.targetBF?`Goal: ${goals.targetBF}%`:undefined} color="#4ecdc4"/>
+          </div>
+
+          {/* Charts with 7/14/30 toggle */}
+          <div style={{...CARD,marginBottom:12}}>
+            <div style={{fontFamily:BC,fontSize:11,color:"rgba(255,255,255,0.35)",textTransform:"uppercase",letterSpacing:1.5,marginBottom:12}}>Weight (lbs)</div>
+            <Chart data={chartData} keys={["weight"]} colors={["#c5f82a"]} showRange/>
+          </div>
+          <div style={CARD}>
+            <div style={{fontFamily:BC,fontSize:11,color:"rgba(255,255,255,0.35)",textTransform:"uppercase",letterSpacing:1.5,marginBottom:12}}>Body Fat %</div>
+            <Chart data={chartData} keys={["bf"]} colors={["#4ecdc4"]} showRange/>
+          </div>
+        </div>}
+
+        {/* ══ LOG ══ */}
+        {tab==="log"&&<div className="fu">
+          {/* Date nav */}
+          <div style={{...CARD,display:"flex",alignItems:"center",gap:10,padding:"10px 12px"}}>
+            <button onClick={()=>setLogDate(d=>shiftDay(d,-1))} style={{background:"rgba(255,255,255,0.07)",border:"none",borderRadius:8,color:"#fff",width:42,height:42,cursor:"pointer",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,touchAction:"manipulation"}}>‹</button>
+            <div style={{flex:1,textAlign:"center"}}>
+              <div style={{fontFamily:BC,fontSize:16,fontWeight:700,lineHeight:1.2}}>{isToday?"Today":fmtFull(logDate)}</div>
+              {!isToday&&<button onClick={()=>setLogDate(todayStr())} style={{background:"none",border:"none",color:"#c5f82a",fontSize:12,cursor:"pointer",fontFamily:BC,textTransform:"uppercase",letterSpacing:0.5,padding:"3px 0 0",touchAction:"manipulation"}}>← Today</button>}
+            </div>
+            <button onClick={()=>{if(logDate<todayStr())setLogDate(d=>shiftDay(d,1));}} style={{background:logDate<todayStr()?"rgba(255,255,255,0.07)":"rgba(255,255,255,0.02)",border:"none",borderRadius:8,color:logDate<todayStr()?"#fff":"rgba(255,255,255,0.12)",width:42,height:42,cursor:logDate<todayStr()?"pointer":"default",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,touchAction:"manipulation"}}>›</button>
+          </div>
+          {!isToday&&<div style={{background:"rgba(197,248,42,0.06)",border:"1px solid rgba(197,248,42,0.15)",borderRadius:10,padding:"9px 14px",marginBottom:14,fontSize:13,color:"rgba(197,248,42,0.8)"}}>📅 Editing {fmtFull(logDate)}</div>}
+
+          {/* Body stats */}
+          <div style={CARD}>
+            <div style={{fontFamily:BC,fontSize:12,color:"rgba(255,255,255,0.4)",textTransform:"uppercase",letterSpacing:1.5,marginBottom:12}}>Body Stats</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div><label style={LBL}>Weight (lbs)</label><input style={INP} type="number" inputMode="decimal" step="0.1" placeholder="185.5" value={al.weight||""} onChange={e=>setField("weight",e.target.value)}/></div>
+              <div><label style={LBL}>Body Fat (%)</label><input style={INP} type="number" inputMode="decimal" step="0.1" placeholder="18.5" value={al.bf||""} onChange={e=>setField("bf",e.target.value)}/></div>
+            </div>
+          </div>
+
+          {/* Macro bars */}
+          <div style={CARD}>
+            <div style={{fontFamily:BC,fontSize:12,color:"rgba(255,255,255,0.4)",textTransform:"uppercase",letterSpacing:1.5,marginBottom:14}}>Macros · {totals.cal} / {goals.targetCalories} kcal</div>
+            <Bar label="Protein" value={totals.p} goal={goals.protein} color="#4ecdc4"/>
+            <Bar label="Carbs" value={totals.c} goal={goals.carbs} color="#ffd93d"/>
+            <Bar label="Fat" value={totals.fat} goal={goals.fat} color="#ff6b6b"/>
+          </div>
+
+          {/* Food log grouped by meal */}
+          <div style={{...CARD,marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{fontFamily:BC,fontSize:12,color:"rgba(255,255,255,0.4)",textTransform:"uppercase",letterSpacing:1.5}}>Food Log · {(al.foods||[]).length} items</div>
+              {logs[shiftDay(logDate,-1)]?.foods?.length>0&&(
+                <button onClick={copyYesterday} style={{background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,color:"rgba(255,255,255,0.5)",fontSize:11,padding:"5px 10px",cursor:"pointer",fontFamily:BC,fontWeight:700,textTransform:"uppercase",touchAction:"manipulation"}}>Copy Yesterday</button>
+              )}
+            </div>
+            {!(al.foods||[]).length?<div style={{color:"rgba(255,255,255,0.2)",fontSize:13,textAlign:"center",padding:"16px 0"}}>No food logged yet</div>
+              :Object.entries(foodsByMeal).map(([mealName,foods])=>(
+                <div key={mealName} style={{marginBottom:12}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                    <div style={{width:6,height:6,borderRadius:"50%",background:MEAL_COLORS[mealName]||"rgba(255,255,255,0.3)"}}/>
+                    <span style={{fontFamily:BC,fontSize:11,fontWeight:700,color:MEAL_COLORS[mealName]||"rgba(255,255,255,0.4)",textTransform:"uppercase",letterSpacing:1}}>{mealName}</span>
+                    <span style={{fontSize:11,color:"rgba(255,255,255,0.25)"}}>· {foods.reduce((a,f)=>a+(f.calories||0),0)} kcal</span>
+                  </div>
+                  {foods.map((f)=>(
+                    <div key={f._idx} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0 8px 12px",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontWeight:600,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+                        <div style={{color:"rgba(255,255,255,0.35)",fontSize:12}}>{f.calories}kcal · P:{f.protein}g · C:{f.carbs}g · F:{f.fat}g{f.displayQty?` · ${f.displayQty}`:""}</div>
+                      </div>
+                      <div style={{display:"flex",gap:4,flexShrink:0}}>
+                        <button onClick={()=>openEdit(f._idx)} style={{background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,color:"rgba(255,255,255,0.5)",cursor:"pointer",fontSize:11,padding:"5px 10px",touchAction:"manipulation",fontFamily:BC,fontWeight:700,textTransform:"uppercase"}}>Edit</button>
+                        <button onClick={()=>delFood(f._idx)} style={{background:"none",border:"none",color:"rgba(255,255,255,0.2)",cursor:"pointer",fontSize:20,padding:"0 0 0 6px",touchAction:"manipulation"}}>✕</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))
+            }
+          </div>
+          <button onClick={()=>setShowFood(true)} style={BTNP}>+ Add Food</button>
+        </div>}
+
+        {/* ══ WEEKLY ══ */}
+        {tab==="week"&&<div className="fu">
+          <div style={{fontFamily:BC,fontSize:28,fontWeight:800,marginBottom:16,lineHeight:1}}>This Week</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+            <Stat label="Avg Calories" value={week.n>0?Math.round(week.cal/week.n):"—"} sub={`Goal: ${goals.targetCalories}`}/>
+            <Stat label="Avg Protein" value={week.n>0?`${Math.round(week.p/week.n)}g`:"—"} sub={`Goal: ${goals.protein}g`} color="#4ecdc4"/>
+            <Stat label="Avg Carbs" value={week.n>0?`${Math.round(week.c/week.n)}g`:"—"} sub={`Goal: ${goals.carbs}g`} color="#ffd93d"/>
+            <Stat label="Avg Fat" value={week.n>0?`${Math.round(week.fat/week.n)}g`:"—"} sub={`Goal: ${goals.fat}g`} color="#ff6b6b"/>
+          </div>
+
+          {/* Weekly macro split */}
+          <div style={{...CARD,marginBottom:14}}>
+            <div style={{fontFamily:BC,fontSize:11,color:"rgba(255,255,255,0.35)",textTransform:"uppercase",letterSpacing:1.5,marginBottom:14}}>Macro Split — This Week</div>
+            <MacroPie protein={week.p} carbs={week.c} fat={week.fat}/>
+          </div>
+
+          <div style={{...CARD,marginBottom:14}}>
+            <div style={{fontFamily:BC,fontSize:11,color:"rgba(255,255,255,0.35)",textTransform:"uppercase",letterSpacing:1.5,marginBottom:14}}>Daily Calories vs Target</div>
+            {days7.map(d=>{
+              const cal=(logs[d]?.foods||[]).reduce((a,f)=>a+(f.calories||0),0);
+              return(
+                <div key={d} style={{display:"flex",alignItems:"center",gap:10,marginBottom:9}}>
+                  <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",fontFamily:BC,minWidth:34}}>{fmtShort(d)}</div>
+                  <div style={{flex:1,height:6,background:"rgba(255,255,255,0.07)",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",width:`${Math.min(100,goals.targetCalories>0?(cal/goals.targetCalories)*100:0)}%`,background:cal>goals.targetCalories?"#ff6b6b":"#c5f82a",borderRadius:3}}/></div>
+                  <div style={{fontSize:11,color:cal>goals.targetCalories?"#ff6b6b":"rgba(255,255,255,0.5)",minWidth:38,textAlign:"right"}}>{cal||"—"}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={CARD}>
+            <div style={{fontFamily:BC,fontSize:11,color:"rgba(255,255,255,0.35)",textTransform:"uppercase",letterSpacing:1.5,marginBottom:14}}>Weekly Macro Totals</div>
+            <Bar label="Protein" value={week.p} goal={goals.protein*7} color="#4ecdc4"/>
+            <Bar label="Carbs" value={week.c} goal={goals.carbs*7} color="#ffd93d"/>
+            <Bar label="Fat" value={week.fat} goal={goals.fat*7} color="#ff6b6b"/>
+          </div>
+        </div>}
+
+        {/* ══ PEPTIDES ══ */}
+        {tab==="peptides"&&secret&&<div className="fu">
+          <div style={{marginBottom:16}}>
+            <div style={{fontFamily:BC,fontSize:28,fontWeight:800,lineHeight:1}}>Protocol</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,0.2)",textTransform:"uppercase",letterSpacing:1.5,marginTop:2}}>Confidential</div>
+          </div>
+
+          {/* Notification settings */}
+          <div style={{...CARD,marginBottom:16}}>
+            <div style={{fontFamily:BC,fontSize:12,color:"rgba(255,255,255,0.4)",textTransform:"uppercase",letterSpacing:1.5,marginBottom:14}}>💊 Weekly Injection Reminder</div>
+            {notifPerm==="granted"?(
+              <div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+                  <span style={{fontSize:14,color:"rgba(255,255,255,0.7)"}}>Notifications enabled</span>
+                  <button onClick={()=>{const n={...notif,enabled:!notif.enabled};saveNotif(n);}} style={{background:notif.enabled?"rgba(197,248,42,0.15)":"rgba(255,255,255,0.06)",border:`1px solid ${notif.enabled?"#c5f82a":"rgba(255,255,255,0.15)"}`,borderRadius:8,color:notif.enabled?"#c5f82a":"rgba(255,255,255,0.5)",fontSize:12,padding:"7px 14px",cursor:"pointer",fontFamily:BC,fontWeight:700,textTransform:"uppercase",touchAction:"manipulation"}}>
+                    {notif.enabled?"On":"Off"}
+                  </button>
+                </div>
+                {notif.enabled&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  <div>
+                    <label style={LBL}>Reminder Day</label>
+                    <select style={sel} value={notif.day} onChange={e=>{const n={...notif,day:+e.target.value};saveNotif(n);}}>
+                      {DAY_NAMES.map((d,i)=><option key={i} value={i}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={LBL}>Reminder Time</label>
+                    <input style={INP} type="time" value={notif.time} onChange={e=>{const n={...notif,time:e.target.value};saveNotif(n);}}/>
+                  </div>
+                  <div style={{fontSize:12,color:"rgba(255,255,255,0.3)",background:"rgba(255,255,255,0.03)",borderRadius:8,padding:"10px 12px",lineHeight:1.5}}>
+                    Reminder set for every <strong style={{color:"rgba(255,255,255,0.6)"}}>{DAY_NAMES[notif.day]}</strong> at <strong style={{color:"rgba(255,255,255,0.6)"}}>{notif.time}</strong>. The app needs to be running (open or backgrounded) to fire — install it to your home screen for best reliability.
+                  </div>
+                </div>}
+              </div>
+            ):(
+              <div>
+                <div style={{fontSize:13,color:"rgba(255,255,255,0.45)",marginBottom:12,lineHeight:1.6}}>
+                  Get a reminder every {DAY_NAMES[notif.day]} at {notif.time} to inject TB-500 and CJC-1295. Requires notification permission.
+                </div>
+                <button onClick={requestNotifPerm} style={BTNP}>Enable Notifications</button>
+              </div>
+            )}
+          </div>
+
+          {wDue>0&&<div style={{background:"rgba(197,248,42,0.08)",border:"1px solid rgba(197,248,42,0.25)",borderRadius:12,padding:"12px 14px",marginBottom:16,display:"flex",alignItems:"center",gap:12}}>
+            <div style={{fontSize:22}}>⚡</div>
+            <div><div style={{fontFamily:BC,fontSize:14,fontWeight:700,color:"#c5f82a"}}>{wDue} weekly injection{wDue>1?"s":""} due</div><div style={{fontSize:11,color:"rgba(255,255,255,0.35)",marginTop:2}}>TB-500 and/or CJC-1295 not logged this week</div></div>
+          </div>}
+          {peptides.map(p=>(
+            <PCard key={p.id} p={p} logs={pLogs} onToggle={toggleP}
+              onEdit={()=>{setPForm({...p});setEditPeptide(p.id);setShowPeptideModal(true);}}
+              onDelete={()=>{if(confirm(`Remove ${p.name} from your protocol?`))savePeptides(peptides.filter(x=>x.id!==p.id));}}
+            />
+          ))}
+          <button onClick={()=>{setPForm({...BLANK_P,id:Date.now().toString()});setEditPeptide(null);setShowPeptideModal(true);}} style={{...BTNG,width:"100%",marginTop:4}}>+ Add Item to Protocol</button>
+          <div style={{marginTop:16,padding:"11px 14px",background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.05)",borderRadius:10,display:"flex",gap:8,alignItems:"center"}}>
+            <span>🔒</span><span style={{fontSize:11,color:"rgba(255,255,255,0.2)"}}>Triple-tap the FORM logo to show or hide this tab.</span>
+          </div>
+        </div>}
+      </div>
+
+      {/* ══ FOOD MODAL ══ */}
+      {showFood&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:200,display:"flex",alignItems:"flex-end",backdropFilter:"blur(4px)"}} onClick={e=>e.target===e.currentTarget&&closeFood()}>
+        <div style={{background:"#111116",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:480,margin:"0 auto",maxHeight:"93vh",overflowY:"auto",padding:"22px 18px 50px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+            <div style={{fontFamily:BC,fontSize:22,fontWeight:800}}>Add Food</div>
+            <button onClick={closeFood} style={{background:"rgba(255,255,255,0.07)",border:"none",borderRadius:"50%",color:"rgba(255,255,255,0.6)",width:34,height:34,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",touchAction:"manipulation"}}>✕</button>
+          </div>
+
+          {/* Meal selector */}
+          <div style={{marginBottom:16}}>
+            <label style={LBL}>Meal</label>
+            <div style={{display:"flex",gap:5}}>{MEALS.map(m=><button key={m} onClick={()=>setMeal(m)} style={mealBtn(m)}>{m}</button>)}</div>
+          </div>
+
+          {/* Food tab selector */}
+          <div style={{display:"flex",gap:5,marginBottom:16}}>
+            {[["manual","Manual"],["barcode","Barcode"],["photo","Photo"],["favs","⭐ Favs"]].map(([t,l])=><button key={t} onClick={()=>{setFoodTab(t);if(t!=="barcode"&&t!=="photo")setPending(null);}} style={fb(t)}>{l}</button>)}
+          </div>
+
+          {/* Manual */}
+          {foodTab==="manual"&&<div style={{display:"flex",flexDirection:"column",gap:13}}>
+            <div><label style={LBL}>Food Name</label><input style={INP} placeholder="e.g. Chicken breast" value={mf.name} onChange={e=>setMf(m=>({...m,name:e.target.value}))}/></div>
+            <div>
+              <label style={LBL}>Macros per 100g</label>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                {[["protein","Protein g"],["carbs","Carbs g"],["fat","Fat g"]].map(([k,l])=>(
+                  <div key={k}><label style={{...LBL,fontSize:10}}>{l}</label><input style={INP} type="number" inputMode="decimal" min="0" value={mf[k]} onChange={e=>setMf(m=>({...m,[k]:e.target.value}))}/></div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label style={LBL}>How much?</label>
+              <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8}}>
+                <input style={INP} type="number" inputMode="decimal" placeholder="Amount" value={mf.qty} onChange={e=>setMf(m=>({...m,qty:e.target.value}))}/>
+                <select style={sel} value={mf.unit} onChange={e=>setMf(m=>({...m,unit:e.target.value}))}>{UNITS.map(u=><option key={u}>{u}</option>)}</select>
+              </div>
+              {mf.unit!=="g"&&mf.unit!=="ml"&&mf.unit!=="serving"&&<div style={{fontSize:11,color:"rgba(255,255,255,0.2)",marginTop:5}}>≈ {Math.round(toGrams(mf.qty,mf.unit))}g</div>}
+            </div>
+            {(mf.protein||mf.carbs||mf.fat)&&<div style={{background:"rgba(197,248,42,0.08)",border:"1px solid rgba(197,248,42,0.2)",borderRadius:10,padding:"11px 14px",fontSize:13,color:"#c5f82a"}}>
+              {mac2cal((parseFloat(mf.protein)||0)*mfS,(parseFloat(mf.carbs)||0)*mfS,(parseFloat(mf.fat)||0)*mfS)} kcal · P:{Math.round((parseFloat(mf.protein)||0)*mfS)}g · C:{Math.round((parseFloat(mf.carbs)||0)*mfS)}g · F:{Math.round((parseFloat(mf.fat)||0)*mfS)}g
+            </div>}
+            <button onClick={addManual} style={{...BTNP,marginTop:4}}>Add to Log</button>
+          </div>}
+
+          {/* Barcode */}
+          {foodTab==="barcode"&&<div style={{display:"flex",flexDirection:"column",gap:14}}>
+            {!pending&&<BarcodeScanner onFound={r=>{setPending(r);setPQty("100");setPUnit("g");}}/>}
+            {pending&&<PendingFoodConfirm pending={pending} pQty={pQty} pUnit={pUnit} setPQty={setPQty} setPUnit={setPUnit} pS={pS} sel={sel} onBack={()=>setPending(null)} onConfirm={confirmPending}/>}
+          </div>}
+
+          {/* Photo */}
+          {foodTab==="photo"&&<div style={{display:"flex",flexDirection:"column",gap:13}}>
+            <div style={{fontSize:13,color:"rgba(255,255,255,0.4)",lineHeight:1.6}}>Take or upload a photo — AI will identify the food and estimate macros.</div>
+            <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f){setPhotoFile(f);setPhotoThumb(URL.createObjectURL(f));setPending(null);setPhotoError("");}}}/>
+            <button onClick={()=>fileRef.current.click()} style={BTNG}>📷 Take / Choose Photo</button>
+            {photoThumb&&<img src={photoThumb} alt="" style={{width:"100%",borderRadius:12,maxHeight:220,objectFit:"cover"}}/>}
+            {photoFile&&!pending&&!photoLoading&&<button onClick={analyzePhoto} style={BTNP}>Analyse with AI</button>}
+            {photoLoading&&<div style={{textAlign:"center",padding:"20px",color:"rgba(255,255,255,0.4)",fontSize:13}}>Analysing…</div>}
+            {photoError&&<div style={{color:"#ff9999",fontSize:13,lineHeight:1.5}}>{photoError}</div>}
+            {pending&&<PendingFoodConfirm pending={pending} pQty={pQty} pUnit={pUnit} setPQty={setPQty} setPUnit={setPUnit} pS={pS} sel={sel} onBack={()=>setPending(null)} onConfirm={confirmPending}/>}
+          </div>}
+
+          {/* Favourites */}
+          {foodTab==="favs"&&<div>
+            {favs.length===0?<div style={{textAlign:"center",padding:"30px 0",color:"rgba(255,255,255,0.2)",fontSize:13}}>No favourites yet — foods you add will be saved here automatically.</div>
+              :favs.map(fav=>(
+                <div key={fav.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:600,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{fav.name}</div>
+                    <div style={{fontSize:12,color:"rgba(255,255,255,0.35)"}}>Per 100g · {fav.calories} kcal · P:{fav.protein}g · C:{fav.carbs}g · F:{fav.fat}g</div>
+                  </div>
+                  <div style={{display:"flex",gap:6,flexShrink:0}}>
+                    <button onClick={()=>addFromFav(fav)} style={{...BTNP,width:"auto",padding:"7px 14px",fontSize:12}}>Add</button>
+                    <button onClick={()=>removeFav(fav.name)} style={{background:"none",border:"none",color:"rgba(255,255,255,0.2)",cursor:"pointer",fontSize:18,padding:"0 4px",touchAction:"manipulation"}}>✕</button>
+                  </div>
+                </div>
+              ))
+            }
+          </div>}
+        </div>
+      </div>}
+
+      {/* ══ EDIT MODAL ══ */}
+      {editIdx!==null&&editForm&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:300,display:"flex",alignItems:"flex-end",backdropFilter:"blur(4px)"}} onClick={e=>e.target===e.currentTarget&&(setEditIdx(null),setEditForm(null))}>
+        <div style={{background:"#111116",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:480,margin:"0 auto",padding:"22px 18px 50px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+            <div style={{fontFamily:BC,fontSize:22,fontWeight:800}}>Edit Food</div>
+            <button onClick={()=>{setEditIdx(null);setEditForm(null);}} style={{background:"rgba(255,255,255,0.07)",border:"none",borderRadius:"50%",color:"rgba(255,255,255,0.6)",width:34,height:34,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",touchAction:"manipulation"}}>✕</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:13}}>
+            <div><label style={LBL}>Food Name</label><input style={INP} value={editForm.name} onChange={e=>setEditForm(f=>({...f,name:e.target.value}))}/></div>
+            <div>
+              <label style={LBL}>Meal</label>
+              <div style={{display:"flex",gap:5}}>{MEALS.map(m=><button key={m} onClick={()=>setEditForm(f=>({...f,meal:m}))} style={{...mealBtn(m),background:editForm.meal===m?MEAL_COLORS[m]:"rgba(255,255,255,0.05)",border:`1px solid ${editForm.meal===m?MEAL_COLORS[m]:"rgba(255,255,255,0.1)"}`,color:editForm.meal===m?"#0a0a0f":"rgba(255,255,255,0.45)"}}>{m}</button>)}</div>
+            </div>
+            <div>
+              <label style={LBL}>Macros (actual amount eaten)</label>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                {[["protein","Protein g"],["carbs","Carbs g"],["fat","Fat g"]].map(([k,l])=>(
+                  <div key={k}><label style={{...LBL,fontSize:10}}>{l}</label><input style={INP} type="number" inputMode="decimal" min="0" value={editForm[k]} onChange={e=>setEditForm(f=>({...f,[k]:e.target.value}))}/></div>
+                ))}
+              </div>
+            </div>
+            {(editForm.protein||editForm.carbs||editForm.fat)&&<div style={{background:"rgba(197,248,42,0.08)",border:"1px solid rgba(197,248,42,0.2)",borderRadius:10,padding:"11px 14px",fontSize:13,color:"#c5f82a"}}>
+              {mac2cal(parseFloat(editForm.protein)||0,parseFloat(editForm.carbs)||0,parseFloat(editForm.fat)||0)} kcal · P:{Math.round(parseFloat(editForm.protein)||0)}g · C:{Math.round(parseFloat(editForm.carbs)||0)}g · F:{Math.round(parseFloat(editForm.fat)||0)}g
+            </div>}
+            <button onClick={saveEdit} style={{...BTNP,marginTop:4}}>Save Changes</button>
+          </div>
+        </div>
+      </div>}
+
+
+      {/* ══ PEPTIDE ADD/EDIT MODAL ══ */}
+      {showPeptideModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:300,display:"flex",alignItems:"flex-end",backdropFilter:"blur(4px)"}} onClick={e=>e.target===e.currentTarget&&setShowPeptideModal(false)}>
+        <div style={{background:"#111116",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:480,margin:"0 auto",maxHeight:"93vh",overflowY:"auto",padding:"22px 18px 50px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+            <div style={{fontFamily:BC,fontSize:22,fontWeight:800}}>{editPeptide?"Edit Item":"Add to Protocol"}</div>
+            <button onClick={()=>setShowPeptideModal(false)} style={{background:"rgba(255,255,255,0.07)",border:"none",borderRadius:"50%",color:"rgba(255,255,255,0.6)",width:34,height:34,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",touchAction:"manipulation"}}>✕</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:13}}>
+            {/* Name + Dose row */}
+            <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8}}>
+              <div><label style={LBL}>Name</label><input style={INP} placeholder="e.g. Semaglutide" value={pForm.name} onChange={e=>setPForm(f=>({...f,name:e.target.value}))}/></div>
+              <div><label style={LBL}>Dose</label><input style={INP} placeholder="e.g. 2mg" value={pForm.dose} onChange={e=>setPForm(f=>({...f,dose:e.target.value}))}/></div>
+            </div>
+            {/* Frequency */}
+            <div>
+              <label style={LBL}>Frequency</label>
+              <div style={{display:"flex",gap:6}}>
+                {["daily","weekly"].map(fr=>(
+                  <button key={fr} onClick={()=>setPForm(f=>({...f,frequency:fr}))} style={{flex:1,background:pForm.frequency===fr?"#c5f82a":"rgba(255,255,255,0.06)",border:"none",borderRadius:8,color:pForm.frequency===fr?"#0a0a0f":"rgba(255,255,255,0.5)",padding:"10px",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:BC,textTransform:"uppercase",touchAction:"manipulation"}}>{fr}</button>
+                ))}
+              </div>
+            </div>
+            {/* Schedule */}
+            <div><label style={LBL}>Schedule / Timing</label><input style={INP} placeholder="e.g. Once daily, AM" value={pForm.schedule} onChange={e=>setPForm(f=>({...f,schedule:e.target.value}))}/></div>
+            {/* Purpose */}
+            <div><label style={LBL}>Purpose</label><textarea style={{...INP,height:64,resize:"none",lineHeight:1.5}} placeholder="What does this do?" value={pForm.purpose} onChange={e=>setPForm(f=>({...f,purpose:e.target.value}))}/></div>
+            {/* Colour picker */}
+            <div>
+              <label style={LBL}>Colour</label>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {["#4ecdc4","#ffd93d","#ff6b6b","#c5f82a","#a78bfa","#f97316","#ec4899","#38bdf8"].map(col=>(
+                  <button key={col} onClick={()=>setPForm(f=>({...f,color:col}))} style={{width:32,height:32,borderRadius:"50%",background:col,border:pForm.color===col?"3px solid #fff":"3px solid transparent",cursor:"pointer",touchAction:"manipulation",flexShrink:0}}/>
+                ))}
+              </div>
+            </div>
+            {/* Detail fields — collapsible */}
+            <div style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,padding:12,display:"flex",flexDirection:"column",gap:11}}>
+              <div style={{fontFamily:BC,fontSize:11,color:"rgba(255,255,255,0.3)",textTransform:"uppercase",letterSpacing:1}}>Optional Detail Fields</div>
+              <div><label style={LBL}>Dose Amount</label><input style={INP} placeholder="e.g. 1 mg · 10 units / 0.1 mL" value={pForm.doseAmount} onChange={e=>setPForm(f=>({...f,doseAmount:e.target.value}))}/></div>
+              <div><label style={LBL}>Reconstitution</label><input style={INP} placeholder="e.g. Add 1 mL BAC water" value={pForm.reconstitution} onChange={e=>setPForm(f=>({...f,reconstitution:e.target.value}))}/></div>
+              <div><label style={LBL}>Supply</label><input style={INP} placeholder="e.g. 2 vials = 20 mg · 40 days" value={pForm.supply} onChange={e=>setPForm(f=>({...f,supply:e.target.value}))}/></div>
+              <div><label style={LBL}>Notes</label><textarea style={{...INP,height:60,resize:"none",lineHeight:1.5}} placeholder="Any extra notes" value={pForm.notes} onChange={e=>setPForm(f=>({...f,notes:e.target.value}))}/></div>
+            </div>
+            <button disabled={!pForm.name.trim()} onClick={()=>{
+              if(!pForm.name.trim())return;
+              const updated=editPeptide
+                ?peptides.map(p=>p.id===editPeptide?{...pForm}:p)
+                :[...peptides,{...pForm,id:pForm.id||Date.now().toString()}];
+              savePeptides(updated);setShowPeptideModal(false);
+            }} style={{...BTNP,marginTop:4,opacity:pForm.name.trim()?1:0.45}}>
+              {editPeptide?"Save Changes":"Add to Protocol"}
+            </button>
+          </div>
+        </div>
+      </div>}
+
+      {/* ══ GOALS MODAL ══ */}
+      {showGoals&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:200,display:"flex",alignItems:"flex-end",backdropFilter:"blur(4px)"}} onClick={e=>e.target===e.currentTarget&&setShowGoals(false)}>
+        <div style={{background:"#111116",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:480,margin:"0 auto",maxHeight:"92vh",overflowY:"auto",padding:"22px 18px 50px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+            <div style={{fontFamily:BC,fontSize:22,fontWeight:800}}>Goals & Targets</div>
+            <button onClick={()=>setShowGoals(false)} style={{background:"rgba(255,255,255,0.07)",border:"none",borderRadius:"50%",color:"rgba(255,255,255,0.6)",width:34,height:34,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",touchAction:"manipulation"}}>✕</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:13}}>
+            {[["goalDate","Goal Date","date"],["targetWeight","Target Weight (lbs)","number"],["targetBF","Target Body Fat (%)","number"],["targetCalories","Daily Calories (kcal)","number"],["protein","Daily Protein (g)","number"],["carbs","Daily Carbs (g)","number"],["fat","Daily Fat (g)","number"]].map(([k,l,t])=>(
+              <div key={k}><label style={LBL}>{l}</label><input style={INP} type={t} value={goalsForm[k]} onChange={e=>setGoalsForm(g=>({...g,[k]:e.target.value}))}/></div>
+            ))}
+            <div style={{fontSize:12,color:"rgba(255,255,255,0.3)",background:"rgba(255,255,255,0.03)",borderRadius:8,padding:"10px 12px"}}>Macro total: {mac2cal(parseFloat(goalsForm.protein)||0,parseFloat(goalsForm.carbs)||0,parseFloat(goalsForm.fat)||0)} kcal</div>
+            <button onClick={()=>{saveGoals(goalsForm);setShowGoals(false);}} style={{...BTNP,marginTop:4}}>Save Goals</button>
+          </div>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+// Extracted pending food confirm block (used in barcode + photo tabs)
+function PendingFoodConfirm({pending,pQty,pUnit,setPQty,setPUnit,pS,sel,onBack,onConfirm}){
+  return(
+    <div style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:12,padding:14}}>
+      <div style={{fontWeight:600,marginBottom:4,fontSize:15}}>{pending.name}</div>
+      <div style={{fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:14}}>Per 100g · {pending.calories} kcal · P:{pending.protein}g · C:{pending.carbs}g · F:{pending.fat}g</div>
+      <label style={LBL}>How much?</label>
+      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:10}}>
+        <input style={INP} type="number" inputMode="decimal" value={pQty} onChange={e=>setPQty(e.target.value)}/>
+        <select style={sel} value={pUnit} onChange={e=>setPUnit(e.target.value)}>{UNITS.map(u=><option key={u}>{u}</option>)}</select>
+      </div>
+      <div style={{fontSize:13,color:"#c5f82a",marginBottom:14}}>= {Math.round(pending.calories*pS)} kcal · P:{Math.round(pending.protein*pS)}g · C:{Math.round(pending.carbs*pS)}g · F:{Math.round(pending.fat*pS)}g</div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={onBack} style={{...BTNG,flex:1}}>← Back</button>
+        <button onClick={onConfirm} style={{...BTNP,flex:2}}>Add to Log</button>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
